@@ -121,7 +121,10 @@ async function handleIncomingMessage(message: any, supabase: any) {
       }
     }
 
-    let { data: contact } = await supabase.from("contacts").select("*").eq("phone_number", fromNumber).single()
+    // Use hardcoded user ID for all incoming messages
+    const userId = "mindscape-user-1"
+
+    let { data: contact } = await supabase.from("contacts").select("*").eq("phone_number", fromNumber).eq("user_id", userId).single()
 
     if (!contact) {
       const { data: newContact } = await supabase
@@ -129,6 +132,7 @@ async function handleIncomingMessage(message: any, supabase: any) {
         .insert({
           phone_number: fromNumber,
           name: `Contact ${fromNumber}`,
+          user_id: userId
         })
         .select()
         .single()
@@ -157,14 +161,14 @@ async function handleIncomingMessage(message: any, supabase: any) {
         status: "delivered",
         from_number: fromNumber,
         to_number: toNumber,
-        user_id: contact.user_id,
+        user_id: userId,
       })
       .select()
       .single()
 
     console.log(`[v0] [Telnyx Webhook] Stored incoming message: ${storedMessage?.id}`)
 
-    if (storedMessage && contact.user_id) {
+    if (storedMessage) {
       broadcastEvent({
         type: "message.received",
         data: {
@@ -173,7 +177,7 @@ async function handleIncomingMessage(message: any, supabase: any) {
             contact,
           },
         },
-        userId: contact.user_id,
+        userId: userId,
         timestamp: Date.now(),
       })
     }

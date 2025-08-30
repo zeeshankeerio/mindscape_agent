@@ -66,11 +66,11 @@ export const db = {
       .from("contacts")
       .select("*")
       .eq("user_id", userId)
-      .order("name")
+      .order("created_at", { ascending: false })
 
     if (error) {
       console.error("[Database] Error fetching contacts:", error)
-      return []
+      throw new Error("Failed to fetch contacts")
     }
 
     return data || []
@@ -90,12 +90,12 @@ export const db = {
       .eq("user_id", userId)
       .single()
 
-    if (error) {
+    if (error && error.code !== "PGRST116") {
       console.error("[Database] Error fetching contact by phone:", error)
-      return null
+      throw new Error("Failed to fetch contact")
     }
 
-    return data
+    return data || null
   },
 
   async getContactById(contactId: number, userId: string): Promise<Contact | null> {
@@ -112,12 +112,12 @@ export const db = {
       .eq("user_id", userId)
       .single()
 
-    if (error) {
+    if (error && error.code !== "PGRST116") {
       console.error("[Database] Error fetching contact by ID:", error)
-      return null
+      throw new Error("Failed to fetch contact")
     }
 
-    return data
+    return data || null
   },
 
   async createContact(contact: Omit<Contact, "id" | "created_at" | "updated_at">): Promise<Contact> {
@@ -126,7 +126,13 @@ export const db = {
       throw new Error("Database not configured. Please set Supabase environment variables.")
     }
 
-    const { data, error } = await supabase.from("contacts").insert(contact).select().single()
+    // Ensure user_id is set to the hardcoded user
+    const contactWithUserId = {
+      ...contact,
+      user_id: "mindscape-user-1" // Hardcoded user ID
+    }
+
+    const { data, error } = await supabase.from("contacts").insert(contactWithUserId).select().single()
 
     if (error) {
       console.error("[Database] Error creating contact:", error)
@@ -146,7 +152,10 @@ export const db = {
 
     let query = supabase
       .from("messages")
-      .select("*")
+      .select(`
+        *,
+        contact:contacts(*)
+      `)
       .eq("user_id", userId)
       .order("created_at", { ascending: false })
       .limit(limit)
@@ -159,13 +168,15 @@ export const db = {
 
     if (error) {
       console.error("[Database] Error fetching messages:", error)
-      return []
+      throw new Error("Failed to fetch messages")
     }
 
     return data || []
   },
 
-  async createMessage(message: Omit<Message, "id" | "created_at" | "updated_at">): Promise<Message> {
+  async createMessage(
+    message: Omit<Message, "id" | "created_at" | "updated_at"> & { user_id: string },
+  ): Promise<Message> {
     const supabase = await createServerClient()
     if (!supabase) {
       throw new Error("Database not configured. Please set Supabase environment variables.")
@@ -174,7 +185,10 @@ export const db = {
     const { data, error } = await supabase
       .from("messages")
       .insert(message)
-      .select()
+      .select(`
+        *,
+        contact:contacts(*)
+      `)
       .single()
 
     if (error) {
@@ -203,11 +217,7 @@ export const db = {
     }
   },
 
-  async updateMessageByTelnyxId(
-    telnyxMessageId: string,
-    updates: Partial<Message>,
-    userId: string,
-  ): Promise<Message | null> {
+  async getMessageById(messageId: number, userId: string): Promise<Message | null> {
     const supabase = await createServerClient()
     if (!supabase) {
       console.warn("[Database] Supabase not configured, returning null message")
@@ -216,18 +226,17 @@ export const db = {
 
     const { data, error } = await supabase
       .from("messages")
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq("telnyx_message_id", telnyxMessageId)
-      .eq("user_id", userId)
       .select(`
         *,
         contact:contacts(*)
       `)
+      .eq("id", messageId)
+      .eq("user_id", userId)
       .single()
 
     if (error && error.code !== "PGRST116") {
-      console.error("[Database] Error updating message by Telnyx ID:", error)
-      throw new Error("Failed to update message")
+      console.error("[Database] Error fetching message by ID:", error)
+      throw new Error("Failed to fetch message")
     }
 
     return data || null
@@ -258,7 +267,7 @@ export const db = {
     return data || null
   },
 
-  // Settings operations
+  // Inbound settings operations
   async getInboundSettings(userId: string): Promise<InboundSettings | null> {
     const supabase = await createServerClient()
     if (!supabase) {
@@ -268,12 +277,12 @@ export const db = {
 
     const { data, error } = await supabase.from("inbound_settings").select("*").eq("user_id", userId).single()
 
-    if (error) {
+    if (error && error.code !== "PGRST116") {
       console.error("[Database] Error fetching inbound settings:", error)
-      return null
+      throw new Error("Failed to fetch inbound settings")
     }
 
-    return data
+    return data || null
   },
 
   async updateInboundSettings(settings: Partial<InboundSettings>, userId: string): Promise<InboundSettings> {
@@ -284,7 +293,7 @@ export const db = {
 
     const { data, error } = await supabase
       .from("inbound_settings")
-      .update({ ...settings, updated_at: new Date().toISOString() })
+      .update(settings)
       .eq("user_id", userId)
       .select()
       .single()
@@ -313,7 +322,7 @@ export const db = {
 
     if (error) {
       console.error("[Database] Error fetching messaging profiles:", error)
-      return []
+      throw new Error("Failed to fetch messaging profiles")
     }
 
     return data || []
@@ -333,35 +342,30 @@ export const db = {
       .eq("is_active", true)
       .single()
 
-    if (error) {
+    if (error && error.code !== "PGRST116") {
       console.error("[Database] Error fetching default messaging profile:", error)
-      return null
+      throw new Error("Failed to fetch default messaging profile")
+    }
+
+    return data || null
+  },
+
+  async createMessagingProfile(
+    profile: Omit<MessagingProfile, "id" | "created_at" | "updated_at"> & { user_id: string },
+  ): Promise<MessagingProfile> {
+    const supabase = await createServerClient()
+    if (!supabase) {
+      throw new Error("Database not configured. Please set Supabase environment variables.")
+    }
+
+    const { data, error } = await supabase.from("messaging_profiles").insert(profile).select().single()
+
+    if (error) {
+      console.error("[Database] Error creating messaging profile:", error)
+      throw new Error("Failed to create messaging profile")
     }
 
     return data
-  },
-
-  async createMessagingProfile(profile: Omit<MessagingProfile, 'id' | 'created_at' | 'updated_at'>): Promise<MessagingProfile | null> {
-    try {
-      const supabase = await createServerClient()
-      if (!supabase) return null
-
-      const { data, error } = await supabase
-        .from('messaging_profiles')
-        .insert(profile)
-        .select()
-        .single()
-
-      if (error) {
-        console.error('Error creating messaging profile:', error)
-        return null
-      }
-
-      return data
-    } catch (error) {
-      console.error('Error creating messaging profile:', error)
-      return null
-    }
   },
 
   async updateMessagingProfilePhone(userId: string, phoneNumber: string): Promise<boolean> {
