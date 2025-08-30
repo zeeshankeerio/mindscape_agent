@@ -46,17 +46,17 @@ In Vercel dashboard, add these environment variables:
 
 #### **Telnyx Configuration**
 ```
-TELNYX_API_KEY=KEY0198F806B5EE30E6D32639BA97DFD2A0_8lhEQ14iAN7p0j6S4eWord
-TELNYX_PUBLIC_KEY=oP9PhmVO50j+FCbFJIO64ArbncEcnMHvn3ou0yoHAe8=
-TELNYX_WEBHOOK_SIGNING_SECRET=dummy_signing_secret_9876543210
+TELNYX_API_KEY=your_telnyx_api_key_here
+TELNYX_PUBLIC_KEY=your_telnyx_public_key_here
+TELNYX_WEBHOOK_SIGNING_SECRET=your_webhook_signing_secret_here
 ```
 
 #### **Supabase Configuration**
 ```
-NEXT_PUBLIC_SUPABASE_URL=https://ngdothjakhxkmiqcbbcl.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-SUPABASE_JWT_SECRET=Tk7QsVWCBfzWu2Rphi+lYNt21aXHgFmnz3+9g6/KXnTV2nCcfR1G57X5zO+XwJ35qfoJ/+PvAbZfcYurkE2TPw==
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url_here
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key_here
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
+SUPABASE_JWT_SECRET=your_supabase_jwt_secret_here
 ```
 
 #### **App Configuration**
@@ -79,13 +79,6 @@ NODE_ENV=production
 
 ### 3.2 DNS Configuration
 Add these DNS records to your domain provider:
-
-#### **For mindscapeanalytics.com (Root Domain)**
-```
-Type: A
-Name: @
-Value: 76.76.19.76
-```
 
 #### **For agent.mindscapeanalytics.com (Subdomain)**
 ```
