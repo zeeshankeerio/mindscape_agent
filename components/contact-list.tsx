@@ -6,7 +6,7 @@ import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Plus, Phone, Loader2 } from "lucide-react"
+import { Search, Plus, Phone, Loader2, X } from "lucide-react"
 import type { Contact } from "@/lib/database"
 import { displayPhoneNumber } from "@/lib/telnyx"
 import { cn } from "@/lib/utils"
@@ -22,6 +22,7 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
   const [searchQuery, setSearchQuery] = useState("")
   const [isLoading, setIsLoading] = useState(true)
   const [isAddingContact, setIsAddingContact] = useState(false)
+  const [showAddForm, setShowAddForm] = useState(false)
   const [newContactPhone, setNewContactPhone] = useState("")
   const [newContactName, setNewContactName] = useState("")
   const { toast } = useToast()
@@ -53,7 +54,14 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
   }, [toast])
 
   const handleAddContact = async () => {
-    if (!newContactPhone.trim()) return
+    if (!newContactPhone.trim()) {
+      toast({
+        title: "Error",
+        description: "Phone number is required",
+        variant: "destructive",
+      })
+      return
+    }
 
     setIsAddingContact(true)
     try {
@@ -77,9 +85,10 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
       setContacts((prev) => [contact, ...prev])
       setNewContactPhone("")
       setNewContactName("")
+      setShowAddForm(false)
 
       toast({
-        title: "Contact added",
+        title: "Success",
         description: `${contact.name || contact.phone_number} has been added to your contacts`,
       })
     } catch (error) {
@@ -92,6 +101,12 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
     } finally {
       setIsAddingContact(false)
     }
+  }
+
+  const handleCancelAdd = () => {
+    setShowAddForm(false)
+    setNewContactPhone("")
+    setNewContactName("")
   }
 
   const filteredContacts = contacts.filter(
@@ -114,9 +129,13 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
       <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-card-foreground">Contacts</h2>
-          <Button size="sm" className="bg-secondary text-secondary-foreground hover:bg-secondary/90">
-            <Plus className="h-4 w-4 mr-1" />
-            Add
+          <Button 
+            size="sm" 
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
+          >
+            {showAddForm ? <X className="h-4 w-4 mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
+            {showAddForm ? "Cancel" : "Add"}
           </Button>
         </div>
 
@@ -131,30 +150,54 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
           />
         </div>
 
-        <div className="space-y-2">
-          <Input
-            placeholder="Phone number"
-            value={newContactPhone}
-            onChange={(e) => setNewContactPhone(e.target.value)}
-            className="text-sm"
-          />
-          <div className="flex space-x-2">
-            <Input
-              placeholder="Name (optional)"
-              value={newContactName}
-              onChange={(e) => setNewContactName(e.target.value)}
-              className="text-sm flex-1"
-            />
-            <Button
-              size="sm"
-              onClick={handleAddContact}
-              disabled={!newContactPhone.trim() || isAddingContact}
-              className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
-            >
-              {isAddingContact ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-            </Button>
+        {/* Add Contact Form */}
+        {showAddForm && (
+          <div className="space-y-3 p-3 bg-muted/30 rounded-lg border border-border/50">
+            <div className="space-y-2">
+              <Input
+                placeholder="Phone number (e.g., +13076249136)"
+                value={newContactPhone}
+                onChange={(e) => setNewContactPhone(e.target.value)}
+                className="text-sm"
+              />
+              <Input
+                placeholder="Name (optional)"
+                value={newContactName}
+                onChange={(e) => setNewContactName(e.target.value)}
+                className="text-sm"
+              />
+            </div>
+            <div className="flex space-x-2">
+              <Button
+                size="sm"
+                onClick={handleAddContact}
+                disabled={!newContactPhone.trim() || isAddingContact}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 flex-1"
+              >
+                {isAddingContact ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    Adding...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add Contact
+                  </>
+                )}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCancelAdd}
+                disabled={isAddingContact}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Contact List */}
