@@ -6,7 +6,9 @@
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start"
+    "start": "next start",
+    "test:production": "node scripts/test-production-readiness.js",
+    "test:production:live": "TEST_URL=https://agent.mindscapeanalytics.com node scripts/test-production-readiness.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
