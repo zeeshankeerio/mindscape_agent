@@ -84,10 +84,42 @@ async function handleIncomingMessage(message: any, supabase: any) {
   try {
     const fromNumber = formatPhoneNumber(message.from.phone_number)
     const toNumber = formatPhoneNumber(message.to.phone_number)
+    const messageText = message.text || ""
+    const messageId = message.id
 
-    console.log(`[v0] Processing incoming message from ${fromNumber} to ${toNumber}`)
+    console.log(`[v0] [Telnyx Webhook] Processing incoming message: ${messageId}`)
+    console.log(`[v0] [Telnyx Webhook] From: ${fromNumber}, To: ${toNumber}`)
+    console.log(`[v0] [Telnyx Webhook] Content: ${messageText.substring(0, 100)}${messageText.length > 100 ? '...' : ''}`)
 
-    const { data: settings } = await supabase.from("inbound_settings").select("*").single()
+    // Use hardcoded user ID for all incoming messages
+    const userId = "mindscape-user-1"
+
+    // Get or create inbound settings with fallback
+    let settings = null
+    try {
+      const { data: settingsData } = await supabase.from("inbound_settings").select("*").eq("user_id", userId).single()
+      settings = settingsData
+    } catch (error) {
+      console.log(`[v0] [Telnyx Webhook] No inbound settings found, using defaults`)
+      // Create default inbound settings if none exist
+      try {
+        const { data: newSettings } = await supabase
+          .from("inbound_settings")
+          .insert({
+            user_id: userId,
+            blocked_numbers: [],
+            keyword_filters: [],
+            business_hours_only: false,
+            auto_reply_enabled: false,
+            auto_reply_message: ""
+          })
+          .select()
+          .single()
+        settings = newSettings
+      } catch (createError) {
+        console.log(`[v0] [Telnyx Webhook] Could not create default settings, continuing with null`)
+      }
+    }
 
     // Check if number is blocked
     if (settings?.blocked_numbers?.includes(fromNumber)) {
@@ -96,14 +128,15 @@ async function handleIncomingMessage(message: any, supabase: any) {
     }
 
     // Check for keyword filters
-    const messageText = message.text?.toLowerCase() || ""
-    const hasKeywordFilter = settings?.keyword_filters?.some((keyword: string) =>
-      messageText.includes(keyword.toLowerCase()),
-    )
+    if (settings?.keyword_filters?.length > 0) {
+      const hasKeywordFilter = settings.keyword_filters.some((keyword: string) =>
+        messageText.toLowerCase().includes(keyword.toLowerCase()),
+      )
 
-    if (hasKeywordFilter) {
-      console.log(`[v0] [Telnyx Webhook] Message contains filtered keyword: ${fromNumber}`)
-      return
+      if (hasKeywordFilter) {
+        console.log(`[v0] [Telnyx Webhook] Message contains filtered keyword: ${fromNumber}`)
+        return
+      }
     }
 
     // Check business hours if enabled
@@ -121,54 +154,89 @@ async function handleIncomingMessage(message: any, supabase: any) {
       }
     }
 
-    // Use hardcoded user ID for all incoming messages
-    const userId = "mindscape-user-1"
-
-    let { data: contact } = await supabase.from("contacts").select("*").eq("phone_number", fromNumber).eq("user_id", userId).single()
-
-    if (!contact) {
-      const { data: newContact } = await supabase
+    // Find or create contact
+    let contact = null
+    try {
+      const { data: existingContact } = await supabase
         .from("contacts")
-        .insert({
-          phone_number: fromNumber,
-          name: `Contact ${fromNumber}`,
-          user_id: userId
-        })
-        .select()
+        .select("*")
+        .eq("phone_number", fromNumber)
+        .eq("user_id", userId)
         .single()
 
-      contact = newContact
-      console.log(`[v0] Created new contact: ${contact?.id}`)
+      if (existingContact) {
+        contact = existingContact
+        console.log(`[v0] [Telnyx Webhook] Found existing contact: ${contact.id}`)
+      }
+    } catch (error) {
+      // Contact doesn't exist, create new one
+      console.log(`[v0] [Telnyx Webhook] Creating new contact for: ${fromNumber}`)
     }
 
     if (!contact) {
-      console.error("[v0] Failed to create or find contact")
+      try {
+        const { data: newContact } = await supabase
+          .from("contacts")
+          .insert({
+            phone_number: fromNumber,
+            name: `Contact ${fromNumber}`,
+            user_id: userId
+          })
+          .select()
+          .single()
+
+        contact = newContact
+        console.log(`[v0] [Telnyx Webhook] Created new contact: ${contact?.id}`)
+      } catch (createError) {
+        console.error(`[v0] [Telnyx Webhook] Failed to create contact:`, createError)
+        return
+      }
+    }
+
+    if (!contact) {
+      console.error("[v0] [Telnyx Webhook] Failed to create or find contact")
       return
     }
 
     // Extract media URLs for MMS
     const mediaUrls = message.media?.map((media: any) => media.url) || []
 
+    // Detect if this is an OTP message
+    const isOTP = /^\d{4,8}$/.test(messageText.trim()) || 
+                  messageText.toLowerCase().includes('otp') ||
+                  messageText.toLowerCase().includes('verification') ||
+                  messageText.toLowerCase().includes('code')
+
+    // Store message in database
     const { data: storedMessage } = await supabase
       .from("messages")
       .insert({
-        telnyx_message_id: message.id,
+        telnyx_message_id: messageId,
         contact_id: contact.id,
         direction: "inbound",
         message_type: message.media && message.media.length > 0 ? "MMS" : "SMS",
-        content: message.text || "",
+        content: messageText,
         media_urls: mediaUrls,
         status: "delivered",
         from_number: fromNumber,
         to_number: toNumber,
         user_id: userId,
+        // Add metadata for OTP detection
+        metadata: {
+          is_otp: isOTP,
+          received_at: new Date().toISOString(),
+          message_length: messageText.length,
+          has_media: mediaUrls.length > 0
+        }
       })
       .select()
       .single()
 
     console.log(`[v0] [Telnyx Webhook] Stored incoming message: ${storedMessage?.id}`)
+    console.log(`[v0] [Telnyx Webhook] OTP detected: ${isOTP}`)
 
     if (storedMessage) {
+      // Broadcast new message to real-time clients
       broadcastEvent({
         type: "message.received",
         data: {
@@ -180,14 +248,41 @@ async function handleIncomingMessage(message: any, supabase: any) {
         userId: userId,
         timestamp: Date.now(),
       })
+
+      // Special handling for OTP messages
+      if (isOTP) {
+        console.log(`[v0] [Telnyx Webhook] OTP message received and processed: ${messageText}`)
+        
+        // Broadcast OTP-specific event
+        broadcastEvent({
+          type: "otp.received",
+          data: {
+            message: storedMessage,
+            contact,
+            otp: messageText.trim(),
+            timestamp: Date.now()
+          },
+          userId: userId,
+          timestamp: Date.now(),
+        })
+      }
     }
 
     // Send auto-reply if enabled
     if (settings?.auto_reply_enabled && settings.auto_reply_message) {
-      await sendAutoReply(toNumber, fromNumber, settings.auto_reply_message)
+      try {
+        await sendAutoReply(toNumber, fromNumber, settings.auto_reply_message)
+        console.log(`[v0] [Telnyx Webhook] Auto-reply sent to: ${fromNumber}`)
+      } catch (autoReplyError) {
+        console.error(`[v0] [Telnyx Webhook] Failed to send auto-reply:`, autoReplyError)
+      }
     }
+
+    console.log(`[v0] [Telnyx Webhook] Successfully processed incoming message: ${messageId}`)
+
   } catch (error) {
     console.error("[v0] [Telnyx Webhook] Error handling incoming message:", error)
+    // Don't throw error to prevent webhook failure
   }
 }
 

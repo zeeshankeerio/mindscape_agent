@@ -67,14 +67,51 @@ export function MessageThread({ contactId }: MessageThreadProps) {
         })
 
         // Show notification for new messages
+        const isOTP = message.metadata?.is_otp || false
+        const notificationTitle = isOTP ? "OTP Received" : "New message"
+        const notificationDescription = isOTP 
+          ? `OTP: ${message.content} from ${contact?.name || displayPhoneNumber(message.from_number)}`
+          : `Message from ${contact?.name || displayPhoneNumber(message.from_number)}`
+
         toast({
-          title: "New message",
-          description: `Message from ${contact?.name || displayPhoneNumber(message.from_number)}`,
+          title: notificationTitle,
+          description: notificationDescription,
+          variant: isOTP ? "default" : "default",
+        })
+
+        // Auto-scroll to new message
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+        }, 100)
+      }
+    })
+
+    // Subscribe to OTP-specific events
+    const unsubscribeOTP = subscribe("otp.received", (event) => {
+      const { message, otp } = event.data
+
+      // Only handle if it's for the current contact
+      if (contactId && message.contact_id === contactId) {
+        // Show special OTP notification
+        toast({
+          title: "🔐 OTP Received",
+          description: `Verification code: ${otp}`,
+          variant: "default",
+        })
+
+        // Update messages if not already present
+        setMessages((prev) => {
+          const exists = prev.some((m) => m.id === message.id)
+          if (exists) return prev
+          return [...prev, message]
         })
       }
     })
 
-    return unsubscribe
+    return () => {
+      unsubscribe()
+      unsubscribeOTP()
+    }
   }, [contactId, contact, subscribe, toast])
 
   useEffect(() => {
