@@ -49,7 +49,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log("[AuthProvider] Initializing, checking for existing session")
     
     // Check session immediately
-    checkSession()
+    const hasSession = checkSession()
+    
+    // Set loading to false after checking session
+    setIsLoading(false)
     
     // Set up storage event listener for cross-tab session sync
     const handleStorageChange = (e: StorageEvent) => {
@@ -62,27 +65,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for storage changes (when session is set from login)
     window.addEventListener('storage', handleStorageChange)
     
-    // Also check for session changes periodically during initial load
-    const interval = setInterval(() => {
-      if (!user && isLoading) {
-        checkSession()
-      } else {
-        clearInterval(interval)
-      }
-    }, 100)
-
     // Cleanup
     return () => {
       window.removeEventListener('storage', handleStorageChange)
-      clearInterval(interval)
     }
   }, [])
-
-  useEffect(() => {
-    if (user) {
-      setIsLoading(false)
-    }
-  }, [user])
 
   const logout = () => {
     console.log("[AuthProvider] Logging out user:", user)
