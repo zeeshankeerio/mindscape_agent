@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Brain } from "lucide-react"
 import { validateCredentials, setAuthSession, getHardcodedUser } from "@/lib/auth"
+import { useAuth } from "@/components/auth-provider"
 
 export default function LoginPage() {
   const [username, setUsername] = useState("")
@@ -15,6 +16,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const router = useRouter()
+  const { refreshSession } = useAuth()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,7 +30,16 @@ export default function LoginPage() {
         console.log("[Login] Credentials valid, setting session")
         const user = getHardcodedUser()
         setAuthSession(user)
-        console.log("[Login] Session set, redirecting to dashboard")
+        
+        // Refresh the auth context to pick up the new session
+        console.log("[Login] Refreshing auth context")
+        refreshSession()
+        
+        // Small delay to ensure session is properly established
+        console.log("[Login] Waiting for session to establish...")
+        await new Promise(resolve => setTimeout(resolve, 200))
+        
+        console.log("[Login] Session established, redirecting to dashboard")
         router.push("/")
       } else {
         console.log("[Login] Invalid credentials")

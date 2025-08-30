@@ -9,14 +9,21 @@ export default function Home() {
   const { user, isLoading } = useAuth()
   const router = useRouter()
   const [isRedirecting, setIsRedirecting] = useState(false)
+  const [hasCheckedAuth, setHasCheckedAuth] = useState(false)
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      console.log("[Home] No user found, redirecting to login")
-      setIsRedirecting(true)
-      router.push("/auth/login")
-    }
-  }, [user, isLoading, router])
+    // Add a small delay to allow session to establish after login
+    const timer = setTimeout(() => {
+      if (!isLoading && !user && !hasCheckedAuth) {
+        console.log("[Home] No user found after delay, redirecting to login")
+        setIsRedirecting(true)
+        router.push("/auth/login")
+        setHasCheckedAuth(true)
+      }
+    }, 500) // 500ms delay
+
+    return () => clearTimeout(timer)
+  }, [user, isLoading, router, hasCheckedAuth])
 
   // Show loading while checking authentication
   if (isLoading || isRedirecting) {
