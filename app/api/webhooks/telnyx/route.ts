@@ -82,8 +82,19 @@ export async function POST(request: NextRequest) {
 
 async function handleIncomingMessage(message: any, supabase: any) {
   try {
-    const fromNumber = formatPhoneNumber(message.from.phone_number)
-    const toNumber = formatPhoneNumber(message.to.phone_number)
+    // Import enhanced phone number validation
+    const { normalizePhoneNumber } = await import("@/lib/telnyx")
+    
+    let fromNumber: string
+    let toNumber: string
+    
+    try {
+      fromNumber = normalizePhoneNumber(message.from.phone_number)
+      toNumber = normalizePhoneNumber(message.to.phone_number)
+    } catch (error) {
+      console.error(`[v0] [Telnyx Webhook] Invalid phone number format:`, error)
+      return // Skip processing if phone numbers are invalid
+    }
     const messageText = message.text || ""
     const messageId = message.id
 

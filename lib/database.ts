@@ -126,9 +126,22 @@ export const db = {
       throw new Error("Database not configured. Please set Supabase environment variables.")
     }
 
+    // Import phone number validation
+    const { normalizePhoneNumber } = await import("@/lib/telnyx")
+
+    // Normalize and validate phone number
+    let normalizedPhone: string
+    try {
+      normalizedPhone = normalizePhoneNumber(contact.phone_number)
+    } catch (error) {
+      console.error("[Database] Invalid phone number:", error)
+      throw new Error(`Invalid phone number: ${contact.phone_number}`)
+    }
+
     // Ensure user_id is set to the hardcoded user
     const contactWithUserId = {
       ...contact,
+      phone_number: normalizedPhone,
       user_id: "mindscape-user-1" // Hardcoded user ID
     }
 

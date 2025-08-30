@@ -6,9 +6,9 @@ import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Plus, Phone, Loader2, X } from "lucide-react"
+import { Search, Plus, Phone, Loader2, X, AlertCircle } from "lucide-react"
 import type { Contact } from "@/lib/database"
-import { displayPhoneNumber } from "@/lib/telnyx"
+import { displayPhoneNumber, isValidPhoneNumber, parsePhoneNumberInput } from "@/lib/telnyx"
 import { cn } from "@/lib/utils"
 
 interface ContactListProps {
@@ -25,6 +25,7 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
   const [showAddForm, setShowAddForm] = useState(false)
   const [newContactPhone, setNewContactPhone] = useState("")
   const [newContactName, setNewContactName] = useState("")
+  const [phoneError, setPhoneError] = useState("")
   const { toast } = useToast()
 
   useEffect(() => {
@@ -53,13 +54,43 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
     fetchContacts()
   }, [toast])
 
+  const handlePhoneNumberChange = (value: string) => {
+    setNewContactPhone(value)
+    setPhoneError("")
+    
+    // Auto-format phone number as user types
+    if (value.trim()) {
+      try {
+        const parsed = parsePhoneNumberInput(value)
+        if (parsed !== value) {
+          // Only update if the parsed version is different to avoid cursor jumping
+          if (value.length >= 10) {
+            setNewContactPhone(parsed)
+          }
+        }
+      } catch (error) {
+        // Ignore parsing errors while typing
+      }
+    }
+  }
+
+  const validatePhoneNumber = (phoneNumber: string): boolean => {
+    if (!phoneNumber.trim()) {
+      setPhoneError("Phone number is required")
+      return false
+    }
+
+    if (!isValidPhoneNumber(phoneNumber.trim())) {
+      setPhoneError("Please enter a valid phone number (e.g., +13076249136 or 3076249136)")
+      return false
+    }
+
+    setPhoneError("")
+    return true
+  }
+
   const handleAddContact = async () => {
-    if (!newContactPhone.trim()) {
-      toast({
-        title: "Error",
-        description: "Phone number is required",
-        variant: "destructive",
-      })
+    if (!validatePhoneNumber(newContactPhone)) {
       return
     }
 
@@ -86,6 +117,7 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
       setNewContactPhone("")
       setNewContactName("")
       setShowAddForm(false)
+      setPhoneError("")
 
       toast({
         title: "Success",
@@ -107,6 +139,7 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
     setShowAddForm(false)
     setNewContactPhone("")
     setNewContactName("")
+    setPhoneError("")
   }
 
   const filteredContacts = contacts.filter(
@@ -154,12 +187,23 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
         {showAddForm && (
           <div className="space-y-3 p-3 bg-muted/30 rounded-lg border border-border/50">
             <div className="space-y-2">
-              <Input
-                placeholder="Phone number (e.g., +13076249136)"
-                value={newContactPhone}
-                onChange={(e) => setNewContactPhone(e.target.value)}
-                className="text-sm"
-              />
+              <div>
+                <Input
+                  placeholder="Phone number (e.g., +13076249136 or 3076249136)"
+                  value={newContactPhone}
+                  onChange={(e) => handlePhoneNumberChange(e.target.value)}
+                  className={cn("text-sm", phoneError && "border-destructive focus:border-destructive")}
+                />
+                {phoneError && (
+                  <div className="flex items-center space-x-1 text-xs text-destructive mt-1">
+                    <AlertCircle className="h-3 w-3" />
+                    <span>{phoneError}</span>
+                  </div>
+                )}
+                <div className="text-xs text-muted-foreground mt-1">
+                  Enter with or without country code. US numbers will be formatted as +1XXXXXXXXXX
+                </div>
+              </div>
               <Input
                 placeholder="Name (optional)"
                 value={newContactName}
@@ -171,7 +215,7 @@ export function ContactList({ selectedContactId, onContactSelect, showFullView =
               <Button
                 size="sm"
                 onClick={handleAddContact}
-                disabled={!newContactPhone.trim() || isAddingContact}
+                disabled={!newContactPhone.trim() || isAddingContact || !!phoneError}
                 className="bg-primary text-primary-foreground hover:bg-primary/90 flex-1"
               >
                 {isAddingContact ? (

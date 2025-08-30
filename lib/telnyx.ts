@@ -60,6 +60,12 @@ export class TelnyxClient {
   }
 
   async sendMessage(request: SendMessageRequest): Promise<TelnyxMessage> {
+    // Ensure phone numbers are in E.164 format
+    const fromNumber = formatPhoneNumber(request.from)
+    const toNumber = formatPhoneNumber(request.to)
+
+    console.log(`[TelnyxClient] Sending message from ${fromNumber} to ${toNumber}`)
+
     const response = await fetch(`${this.baseUrl}/messages`, {
       method: "POST",
       headers: {
@@ -67,8 +73,8 @@ export class TelnyxClient {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        from: request.from,
-        to: request.to,
+        from: fromNumber,
+        to: toNumber,
         text: request.text,
         media_urls: request.media_urls,
         webhook_url: request.webhook_url,
@@ -145,31 +151,134 @@ export class TelnyxClient {
   }
 }
 
-// Utility functions for phone number formatting
-export function formatPhoneNumber(phoneNumber: string): string {
+// Enhanced phone number validation and formatting
+export function isValidPhoneNumber(phoneNumber: string): boolean {
+  if (!phoneNumber || typeof phoneNumber !== 'string') {
+    return false
+  }
+
   // Remove all non-digit characters
   const digits = phoneNumber.replace(/\D/g, "")
-
-  // Add +1 if it's a US number without country code
-  if (digits.length === 10) {
-    return `+1${digits}`
+  
+  // Check if it's a valid length (7-15 digits)
+  if (digits.length < 7 || digits.length > 15) {
+    return false
   }
 
-  // Add + if missing
-  if (!phoneNumber.startsWith("+")) {
-    return `+${digits}`
+  // Check if it starts with a valid country code
+  if (digits.length >= 10) {
+    // US/Canada numbers should be 10 or 11 digits
+    if (digits.length === 10 || (digits.length === 11 && digits.startsWith("1"))) {
+      return true
+    }
+    // International numbers should be 7-15 digits
+    if (digits.length >= 7 && digits.length <= 15) {
+      return true
+    }
   }
 
-  return phoneNumber
+  return false
 }
 
-export function displayPhoneNumber(phoneNumber: string): string {
-  const digits = phoneNumber.replace(/\D/g, "")
-
-  if (digits.length === 11 && digits.startsWith("1")) {
-    const number = digits.slice(1)
-    return `(${number.slice(0, 3)}) ${number.slice(3, 6)}-${number.slice(6)}`
+// Enhanced phone number formatting to E.164 format
+export function formatPhoneNumber(phoneNumber: string): string {
+  if (!phoneNumber || typeof phoneNumber !== 'string') {
+    throw new Error("Invalid phone number: must be a non-empty string")
   }
 
-  return phoneNumber
+  // Remove all non-digit characters
+  const digits = phoneNumber.replace(/\D/g, "")
+  
+  if (digits.length === 0) {
+    throw new Error("Invalid phone number: no digits found")
+  }
+
+  // Handle US/Canada numbers
+  if (digits.length === 10) {
+    // 10-digit number: add +1 prefix
+    return `+1${digits}`
+  } else if (digits.length === 11 && digits.startsWith("1")) {
+    // 11-digit number starting with 1: add + prefix
+    return `+${digits}`
+  } else if (digits.length === 11 && !digits.startsWith("1")) {
+    // 11-digit number not starting with 1: assume international
+    return `+${digits}`
+  } else if (digits.length >= 7 && digits.length <= 15) {
+    // International number: add + prefix
+    return `+${digits}`
+  } else {
+    throw new Error(`Invalid phone number length: ${digits.length} digits`)
+  }
+}
+
+// Enhanced display formatting for UI
+export function displayPhoneNumber(phoneNumber: string): string {
+  if (!phoneNumber || typeof phoneNumber !== 'string') {
+    return "Invalid Number"
+  }
+
+  try {
+    const formatted = formatPhoneNumber(phoneNumber)
+    const digits = formatted.replace(/\D/g, "")
+
+    // US/Canada format: (XXX) XXX-XXXX
+    if (digits.length === 11 && digits.startsWith("1")) {
+      const number = digits.slice(1)
+      return `(${number.slice(0, 3)}) ${number.slice(3, 6)}-${number.slice(6)}`
+    }
+    
+    // International format: +XX XXX XXX XXXX
+    if (digits.length > 11) {
+      const countryCode = digits.slice(0, digits.length - 10)
+      const nationalNumber = digits.slice(digits.length - 10)
+      return `+${countryCode} ${nationalNumber.slice(0, 3)} ${nationalNumber.slice(3, 6)} ${nationalNumber.slice(6)}`
+    }
+
+    // Default: show as is
+    return formatted
+  } catch (error) {
+    console.error("Error formatting phone number for display:", error)
+    return phoneNumber
+  }
+}
+
+// Parse phone number input from various formats
+export function parsePhoneNumberInput(input: string): string {
+  if (!input || typeof input !== 'string') {
+    return ""
+  }
+
+  // Remove all non-digit characters except +
+  const cleaned = input.replace(/[^\d+]/g, "")
+  
+  // If it starts with +, keep it
+  if (cleaned.startsWith("+")) {
+    return cleaned
+  }
+  
+  // If it's 10 digits, assume US number
+  if (cleaned.length === 10) {
+    return `+1${cleaned}`
+  }
+  
+  // If it's 11 digits starting with 1, assume US number
+  if (cleaned.length === 11 && cleaned.startsWith("1")) {
+    return `+${cleaned}`
+  }
+  
+  // Otherwise, add + prefix
+  return `+${cleaned}`
+}
+
+// Validate and format phone number for database storage
+export function normalizePhoneNumber(phoneNumber: string): string {
+  try {
+    if (!isValidPhoneNumber(phoneNumber)) {
+      throw new Error("Invalid phone number format")
+    }
+    return formatPhoneNumber(phoneNumber)
+  } catch (error) {
+    console.error("Error normalizing phone number:", error)
+    throw new Error(`Invalid phone number: ${phoneNumber}`)
+  }
 }
