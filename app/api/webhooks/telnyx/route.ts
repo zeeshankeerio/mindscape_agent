@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { TelnyxClient, type TelnyxWebhookPayload } from "@/lib/telnyx"
 import { createClient } from "@supabase/supabase-js"
-import { formatPhoneNumber } from "@/lib/telnyx"
 import { broadcastEvent } from "@/app/api/events/route"
 
 // Initialize Telnyx client
@@ -29,6 +28,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[v0] [Telnyx Webhook] Received webhook with signature: ${signature ? "present" : "missing"}`)
 
+    // Validate webhook signature in production
     if (process.env.NODE_ENV === "production") {
       const isValid = telnyxClient.validateWebhookSignature(body, signature, timestamp)
       if (!isValid) {
@@ -39,10 +39,10 @@ export async function POST(request: NextRequest) {
 
     // Parse the webhook payload
     const payload: TelnyxWebhookPayload = JSON.parse(body)
-    const { event_type } = payload.data
+    const { event_type, id: webhookId, occurred_at } = payload.data
     const message = payload.data.payload
 
-    console.log(`[v0] [Telnyx Webhook] Received event: ${event_type} for message: ${message.id}`)
+    console.log(`[v0] [Telnyx Webhook] Processing event: ${event_type} (ID: ${webhookId}) at ${occurred_at}`)
 
     // Get Supabase client
     const supabase = getSupabaseClient()
@@ -51,29 +51,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, warning: "Database not configured" }, { status: 200 })
     }
 
-    // Handle different event types
+    // Handle different event types with comprehensive logging
     switch (event_type) {
       case "message.received":
+        console.log(`[v0] [Telnyx Webhook] Processing incoming message: ${message.id}`)
         await handleIncomingMessage(message, supabase)
         break
 
       case "message.sent":
+        console.log(`[v0] [Telnyx Webhook] Processing sent message: ${message.id}`)
         await handleMessageSent(message, supabase)
         break
 
       case "message.delivered":
+        console.log(`[v0] [Telnyx Webhook] Processing delivered message: ${message.id}`)
         await handleMessageDelivered(message, supabase)
         break
 
       case "message.delivery_failed":
+        console.log(`[v0] [Telnyx Webhook] Processing failed message: ${message.id}`)
         await handleMessageFailed(message, supabase)
+        break
+
+      case "message.finalized":
+        console.log(`[v0] [Telnyx Webhook] Processing finalized message: ${message.id}`)
+        await handleMessageFinalized(message, supabase)
+        break
+
+      case "messaging_profile.updated":
+        console.log(`[v0] [Telnyx Webhook] Processing profile update: ${message.id}`)
+        await handleProfileUpdate(message, supabase)
         break
 
       default:
         console.log(`[v0] [Telnyx Webhook] Unhandled event type: ${event_type}`)
+        // Still return success to prevent webhook retries
     }
 
-    return NextResponse.json({ received: true }, { status: 200 })
+    console.log(`[v0] [Telnyx Webhook] Successfully processed webhook: ${webhookId}`)
+    return NextResponse.json({ received: true, processed: true }, { status: 200 })
   } catch (error) {
     console.error("[v0] [Telnyx Webhook] Error processing webhook:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -95,6 +111,7 @@ async function handleIncomingMessage(message: any, supabase: any) {
       console.error(`[v0] [Telnyx Webhook] Invalid phone number format:`, error)
       return // Skip processing if phone numbers are invalid
     }
+
     const messageText = message.text || ""
     const messageId = message.id
 
@@ -213,7 +230,7 @@ async function handleIncomingMessage(message: any, supabase: any) {
     const mediaUrls = message.media?.map((media: any) => media.url) || []
 
     // Detect if this is an OTP message
-    const isOTP = /^\d{4,8}$/.test(messageText.trim()) || 
+    const isOTP = /^\d{4,8}$/.test(messageText.trim()) ||
                   messageText.toLowerCase().includes('otp') ||
                   messageText.toLowerCase().includes('verification') ||
                   messageText.toLowerCase().includes('code')
@@ -237,7 +254,9 @@ async function handleIncomingMessage(message: any, supabase: any) {
           is_otp: isOTP,
           received_at: new Date().toISOString(),
           message_length: messageText.length,
-          has_media: mediaUrls.length > 0
+          has_media: mediaUrls.length > 0,
+          telnyx_webhook_id: messageId,
+          carrier: message.from?.carrier || null
         }
       })
       .select()
@@ -263,7 +282,7 @@ async function handleIncomingMessage(message: any, supabase: any) {
       // Special handling for OTP messages
       if (isOTP) {
         console.log(`[v0] [Telnyx Webhook] OTP message received and processed: ${messageText}`)
-        
+
         // Broadcast OTP-specific event
         broadcastEvent({
           type: "otp.received",
@@ -299,104 +318,159 @@ async function handleIncomingMessage(message: any, supabase: any) {
 
 async function handleMessageSent(message: any, supabase: any) {
   try {
-    if (message.id) {
-      console.log(`[v0] [Telnyx Webhook] Message sent: ${message.id}`)
+    console.log(`[v0] [Telnyx Webhook] Processing sent message: ${message.id}`)
+    
+    // Update message status in database
+    const { error } = await supabase
+      .from("messages")
+      .update({ 
+        status: "sent",
+        metadata: {
+          ...message.metadata,
+          sent_at: message.sent_at,
+          telnyx_status: "sent"
+        }
+      })
+      .eq("telnyx_message_id", message.id)
 
-      const { data: updatedMessage } = await supabase
-        .from("messages")
-        .update({ status: "sent" })
-        .eq("telnyx_message_id", message.id)
-        .select("user_id")
-        .single()
-
-      // Broadcast status update to connected clients
-      if (updatedMessage?.user_id) {
-        broadcastEvent({
-          type: "message.status",
-          data: {
-            messageId: message.id,
-            status: "sent",
-          },
-          userId: updatedMessage.user_id,
-          timestamp: Date.now(),
-        })
-      }
+    if (error) {
+      console.error(`[v0] [Telnyx Webhook] Error updating sent message:`, error)
+    } else {
+      console.log(`[v0] [Telnyx Webhook] Updated message status to sent: ${message.id}`)
     }
   } catch (error) {
-    console.error("[v0] [Telnyx Webhook] Error handling message sent:", error)
+    console.error("[v0] [Telnyx Webhook] Error handling sent message:", error)
   }
 }
 
 async function handleMessageDelivered(message: any, supabase: any) {
   try {
-    if (message.id) {
-      console.log(`[v0] [Telnyx Webhook] Message delivered: ${message.id}`)
+    console.log(`[v0] [Telnyx Webhook] Processing delivered message: ${message.id}`)
+    
+    // Update message status in database
+    const { error } = await supabase
+      .from("messages")
+      .update({ 
+        status: "delivered",
+        metadata: {
+          ...message.metadata,
+          delivered_at: message.delivered_at,
+          telnyx_status: "delivered"
+        }
+      })
+      .eq("telnyx_message_id", message.id)
 
-      const { data: updatedMessage } = await supabase
-        .from("messages")
-        .update({ status: "delivered" })
-        .eq("telnyx_message_id", message.id)
-        .select("user_id")
-        .single()
-
-      if (updatedMessage?.user_id) {
-        broadcastEvent({
-          type: "message.status",
-          data: {
-            messageId: message.id,
-            status: "delivered",
-          },
-          userId: updatedMessage.user_id,
-          timestamp: Date.now(),
-        })
-      }
+    if (error) {
+      console.error(`[v0] [Telnyx Webhook] Error updating delivered message:`, error)
+    } else {
+      console.log(`[v0] [Telnyx Webhook] Updated message status to delivered: ${message.id}`)
     }
   } catch (error) {
-    console.error("[v0] [Telnyx Webhook] Error handling message delivered:", error)
+    console.error("[v0] [Telnyx Webhook] Error handling delivered message:", error)
   }
 }
 
 async function handleMessageFailed(message: any, supabase: any) {
   try {
-    if (message.id) {
-      console.log(`[v0] [Telnyx Webhook] Message failed: ${message.id}`)
+    console.log(`[v0] [Telnyx Webhook] Processing failed message: ${message.id}`)
+    
+    // Update message status in database
+    const { error } = await supabase
+      .from("messages")
+      .update({ 
+        status: "failed",
+        metadata: {
+          ...message.metadata,
+          failed_at: message.failed_at,
+          telnyx_status: "failed",
+          failure_reason: message.failure_reason || "Unknown"
+        }
+      })
+      .eq("telnyx_message_id", message.id)
 
-      const { data: updatedMessage } = await supabase
-        .from("messages")
-        .update({ status: "failed" })
-        .eq("telnyx_message_id", message.id)
-        .select("user_id")
-        .single()
-
-      // Broadcast status update to connected clients
-      if (updatedMessage?.user_id) {
-        broadcastEvent({
-          type: "message.status",
-          data: {
-            messageId: message.id,
-            status: "failed",
-            error: message.errors?.[0]?.detail || "Delivery failed",
-          },
-          userId: updatedMessage.user_id,
-          timestamp: Date.now(),
-        })
-      }
+    if (error) {
+      console.error(`[v0] [Telnyx Webhook] Error updating failed message:`, error)
+    } else {
+      console.log(`[v0] [Telnyx Webhook] Updated message status to failed: ${message.id}`)
     }
   } catch (error) {
-    console.error("[v0] [Telnyx Webhook] Error handling message failed:", error)
+    console.error("[v0] [Telnyx Webhook] Error handling failed message:", error)
   }
 }
 
-async function sendAutoReply(fromNumber: string, toNumber: string, message: string) {
+async function handleMessageFinalized(message: any, supabase: any) {
   try {
-    await telnyxClient.sendMessage({
-      from: fromNumber,
-      to: toNumber,
-      text: message,
+    console.log(`[v0] [Telnyx Webhook] Processing finalized message: ${message.id}`)
+    
+    // Update message with final status
+    const { error } = await supabase
+      .from("messages")
+      .update({ 
+        metadata: {
+          ...message.metadata,
+          finalized_at: message.finalized_at,
+          telnyx_status: "finalized",
+          final_status: message.status
+        }
+      })
+      .eq("telnyx_message_id", message.id)
+
+    if (error) {
+      console.error(`[v0] [Telnyx Webhook] Error updating finalized message:`, error)
+    } else {
+      console.log(`[v0] [Telnyx Webhook] Updated message to finalized: ${message.id}`)
+    }
+  } catch (error) {
+    console.error("[v0] [Telnyx Webhook] Error handling finalized message:", error)
+  }
+}
+
+async function handleProfileUpdate(message: any, supabase: any) {
+  try {
+    console.log(`[v0] [Telnyx Webhook] Processing profile update: ${message.id}`)
+    
+    // Update messaging profile in database
+    const { error } = await supabase
+      .from("messaging_profiles")
+      .update({ 
+        updated_at: new Date().toISOString(),
+        metadata: {
+          last_webhook_update: new Date().toISOString(),
+          telnyx_profile_id: message.id
+        }
+      })
+      .eq("profile_id", message.phone_number)
+
+    if (error) {
+      console.error(`[v0] [Telnyx Webhook] Error updating profile:`, error)
+    } else {
+      console.log(`[v0] [Telnyx Webhook] Updated messaging profile: ${message.id}`)
+    }
+  } catch (error) {
+    console.error("[v0] [Telnyx Webhook] Error handling profile update:", error)
+  }
+}
+
+async function sendAutoReply(toNumber: string, fromNumber: string, message: string) {
+  try {
+    const response = await fetch("/api/send-message", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: fromNumber,
+        text: message,
+      }),
     })
 
-    console.log(`[v0] [Telnyx Webhook] Auto-reply sent to: ${toNumber}`)
+    if (!response.ok) {
+      throw new Error(`Auto-reply failed: ${response.statusText}`)
+    }
+
+    console.log(`[v0] [Telnyx Webhook] Auto-reply sent successfully to: ${fromNumber}`)
   } catch (error) {
-    console.error("[v0] [Telnyx Webhook] Error sending auto-reply:", error)
+    console.error(`[v0] [Telnyx Webhook] Failed to send auto-reply:`, error)
+    throw error
   }
 }

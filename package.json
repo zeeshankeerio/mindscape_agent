@@ -8,7 +8,11 @@
     "lint": "next lint",
     "start": "next start",
     "test:production": "node scripts/test-production-readiness.js",
-    "test:production:live": "TEST_URL=https://agent.mindscapeanalytics.com node scripts/test-production-readiness.js"
+    "test:production:live": "TEST_URL=https://agent.mindscapeanalytics.com node scripts/test-production-readiness.js",
+    "test:complete": "node scripts/test-complete-functionality.js",
+    "test:complete:live": "TEST_URL=https://agent.mindscapeanalytics.com node scripts/test-complete-functionality.js",
+    "verify:telnyx": "node scripts/verify-telnyx-config.js",
+    "verify:telnyx:live": "TEST_URL=https://agent.mindscapeanalytics.com node scripts/verify-telnyx-config.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
